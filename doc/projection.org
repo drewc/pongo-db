@@ -1,0 +1,258 @@
+#+TITLE: ~SELECT "view"(anyelement, projection)~
+#+OPTIONS: ^:{}
+
+A projection is the JSON equivalent to ~SELECT <projection> FROM ...~
+in SQL. So, while SQL has ~CREATE VIEW~, we have a ~view~ function which can be specialized
+
+Projections, may either specify a list of fields to return or list
+fields to exclude in the result documents.
+
+*IMPORTANT* Except for excluding the ~_id~ and ~_type~ field in
+inclusive projections, you cannot mix exclusive and inclusive
+projections.
+
+| Syntax                              | Description                           |
+|-------------------------------------+---------------------------------------|
+| <field>: <1 or true>                | Specify the inclusion of a field.     |
+| <field>: <0 or false>               | Specify the suppression of the field. |
+
+
+* /Function/ ~view(jso json, projection json)~
+
+
+#+BEGIN_SRC sql :engine postgresql :cmdline "--host localhost --user pongo pongo"
+  CREATE OR REPLACE FUNCTION "view"(jso json, projection json)
+  RETURNS json AS $$
+
+  SELECT 
+  -- We see if it's include or exclude
+     CASE (SELECT CASE 
+                     WHEN (value = '1' OR value = 'true') THEN
+                      'include'
+                     WHEN (value = '0' OR value = 'false') THEN 
+                      'exclude'
+                    END
+            FROM (SELECT json.value AS value
+                  FROM json_each_text("projection") AS json 
+                  WHERE substring(json.key FROM 1 FOR 1) != '$'
+                  LIMIT 1) 
+            AS include_or_exclude)
+    -- include
+      WHEN 'include' THEN
+        (SELECT json_object_agg((json).key, "jso"->(json).key) AS json
+         FROM (SELECT json_each_text (
+               "DTRT_with__id_and__type_for_inclusive"(projection)) AS json) 
+         AS json_each
+         WHERE substring((json).key FROM 1 FOR 1) != '$'
+               AND CASE WHEN (((json).key = '_id') OR ((json).key = '_type'))
+                        THEN CASE WHEN ((json_typeof((COALESCE("jso"->(json).key, 
+                                                    json_build_object ('', NULL))
+                                          )->'') = 'null') 
+                                        OR "projection"->>(json).key = '0'
+                                        OR "projection"->>(json).key = 'false')
+                                  THEN false 
+                                  ELSE true 
+                                  END
+                    ELSE true END)
+                         
+    -- exclude
+      WHEN 'exclude' THEN
+        (SELECT json_object_agg((json).key, (json).value) AS json
+         FROM (SELECT json_each ("jso") AS json) 
+         AS json_each
+         WHERE (projection->(json).key) IS NULL)
+     ELSE "jso"
+     END
+     
+  $$ LANGUAGE SQL;
+#+END_SRC
+
+
+#+HEADER: :results value html 
+#+BEGIN_SRC sql :engine postgresql :cmdline "--html --host localhost --user pongo pongo"
+   BEGIN;
+
+   CREATE TABLE test ( x TEXT, y NUMERIC );
+
+   INSERT INTO test VALUES ('asd', 1),('bsd', 1);
+
+  SELECT "view"(as_json(test), NULL) FROM test ;
+
+  SELECT "view"(as_json(test), '{"x" : 0}'::json) FROM test ;
+  SELECT "view"(as_json(test), '{"x" : 1}'::json) FROM test ;
+  SELECT "view"(as_json(test), '{"_type" : 1}'::json) FROM test ;
+  SELECT "view"(as_json(test), '{"_type" : 0}'::json) FROM test ;
+
+   CREATE TABLE test2( x TEXT PRIMARY KEY, y NUMERIC );
+
+   INSERT INTO test2 VALUES ('csd', 1),('dsd', 123.11);
+
+  SELECT "view"(as_json(test), '{"_type" : 0}'::json) FROM test2 AS test ;
+
+  SELECT "view"(as_json(test), '{"y" : 1, "_type" : false}'::json) FROM test2 AS test ;
+  ROLLBACK;
+
+#+END_SRC
+
+
+#+BEGIN_HTML
+<p>BEGIN</p>
+<p>CREATE TABLE</p>
+<p>INSERT 0 2</p>
+<table border="1">
+  <tr>
+    <th align="center">view</th>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;_type&quot; : &quot;test&quot;, &quot;x&quot; : &quot;asd&quot;, &quot;y&quot; : 1 }</td>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;_type&quot; : &quot;test&quot;, &quot;x&quot; : &quot;bsd&quot;, &quot;y&quot; : 1 }</td>
+  </tr>
+</table>
+
+<table border="1">
+  <tr>
+    <th align="center">view</th>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;_type&quot; : &quot;test&quot;, &quot;y&quot; : 1 }</td>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;_type&quot; : &quot;test&quot;, &quot;y&quot; : 1 }</td>
+  </tr>
+</table>
+
+<table border="1">
+  <tr>
+    <th align="center">view</th>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;_type&quot; : &quot;test&quot;, &quot;x&quot; : &quot;asd&quot; }</td>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;_type&quot; : &quot;test&quot;, &quot;x&quot; : &quot;bsd&quot; }</td>
+  </tr>
+</table>
+
+<table border="1">
+  <tr>
+    <th align="center">view</th>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;_type&quot; : &quot;test&quot; }</td>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;_type&quot; : &quot;test&quot; }</td>
+  </tr>
+</table>
+
+<table border="1">
+  <tr>
+    <th align="center">view</th>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;x&quot; : &quot;asd&quot;, &quot;y&quot; : 1 }</td>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;x&quot; : &quot;bsd&quot;, &quot;y&quot; : 1 }</td>
+  </tr>
+</table>
+
+<p>CREATE TABLE</p>
+<p>INSERT 0 2</p>
+<table border="1">
+  <tr>
+    <th align="center">view</th>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;_id&quot; : &quot;csd&quot;, &quot;y&quot; : 1 }</td>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;_id&quot; : &quot;dsd&quot;, &quot;y&quot; : 123.11 }</td>
+  </tr>
+</table>
+
+<table border="1">
+  <tr>
+    <th align="center">view</th>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;_id&quot; : &quot;csd&quot;, &quot;y&quot; : 1 }</td>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;_id&quot; : &quot;dsd&quot;, &quot;y&quot; : 123.11 }</td>
+  </tr>
+</table>
+
+<p>ROLLBACK</p>
+#+END_HTML
+
+
+* Include ~_id~ and ~_type~ automagically
+
+#+BEGIN_SRC sql :engine postgresql :cmdline "--host localhost --user pongo pongo"
+  CREATE OR REPLACE FUNCTION "DTRT_with__id_and__type_for_inclusive"(projection json)
+  RETURNS json AS $$
+   SELECT "merge"(ARRAY[ CASE WHEN ((($1->>'_id') IS NOT NULL))
+                              THEN NULL ELSE json_build_object('_id', true) END, 
+                         CASE WHEN ((($1->>'_type') IS NOT NULL))
+                              THEN NULL ELSE json_build_object('_type', true) END, 
+                        $1]) 
+     
+  $$ LANGUAGE SQL;
+#+END_SRC
+
+** Example
+
+#+HEADER: :results value html
+#+BEGIN_SRC sql :engine postgresql :cmdline "--html --host localhost --user pongo pongo"
+  SELECT * FROM "DTRT_with__id_and__type_for_inclusive"(NULL);
+  SELECT * FROM "DTRT_with__id_and__type_for_inclusive"('{"_type" : 0}'::json);
+  SELECT * FROM "DTRT_with__id_and__type_for_inclusive"('{"_id" : 1}'::json);
+
+  SELECT * FROM "DTRT_with__id_and__type_for_inclusive"('{"_id" : false}'::json);
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_HTML
+<table border="1">
+  <tr>
+    <th align="center">DTRT_with__id_and__type_for_inclusive</th>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;_id&quot; : true, &quot;_type&quot; : true }</td>
+  </tr>
+</table>
+
+<table border="1">
+  <tr>
+    <th align="center">DTRT_with__id_and__type_for_inclusive</th>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;_id&quot; : true, &quot;_type&quot; : 0 }</td>
+  </tr>
+</table>
+
+<table border="1">
+  <tr>
+    <th align="center">DTRT_with__id_and__type_for_inclusive</th>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;_type&quot; : true, &quot;_id&quot; : 1 }</td>
+  </tr>
+</table>
+
+<table border="1">
+  <tr>
+    <th align="center">DTRT_with__id_and__type_for_inclusive</th>
+  </tr>
+  <tr valign="top">
+    <td align="left">{ &quot;_type&quot; : true, &quot;_id&quot; : false }</td>
+  </tr>
+</table>
+
+#+END_HTML
+
+
+
