@@ -1,0 +1,27 @@
+#+TITLE: PongoDB : A JSON interface to PostgreSQL databases
+
+POSTGRES came before SQL, in some sense of the word. PostresSQL came
+after SQL, and improved on it while still implementing POSTGRES
+underneath. 
+
+JSON is a very nice notation for objects. The twain shall meet, in the
+form of PongoDB.
+
+#+BEGIN_SRC sql
+CREATE DATABASE pongo;
+CREATE ROLE pongo WITH LOGIN SUPERUSER;
+#+END_SRC
+
+#+BEGIN_SRC sql :engine postgresql :cmdline "--host localhost --user pongo pongo"
+CREATE SCHEMA pongo;
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp
+  (require 'ob-sql)
+  (add-hook 'sql-mode-hook
+           (lambda ()
+             (sql-highlight-postgres-keywords)))
+#+END_SRC
+
+
+

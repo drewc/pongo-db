@@ -1,0 +1,520 @@
+#+TITLE: as_json(anyelement);
+#+SETUPFILE: publish-html.org
+#+INCLUDE: html-navbar.org
+#+OPTIONS: ^:{}
+
+#+HTML: <div id="body" class="container" style="padding-top:65px"><div class="row">
+#+HTML: <div class="col-md-9"> 
+
+#+HTML: <p class="lead">
+
+The database itself may or may not contain any JSON, yet that is what
+is desired. ~as_json~ to the rescue!
+
+PostgreSQL already offers ~to_json~, but PongoDB wants very little to
+do with SQL. 
+
+It is not NoSQL /per se/, because everything has a purpose, and a big
+reasoning behind PongoDB is to avoid SQL as much as possible.
+ 
+#+HTML: </p> 
+#+HTML: </div> 
+
+#+HTML: <nav id="toc-nav" class="col-md-3 hidden-xs hidden-sm"
+#+HTML:       style="float:right">
+#+TOC: headlines 2   
+#+HTML: </nav> <div class="col-md-9">
+
+* ~as_json~ Concepts
+  
+Databases are not generally designed with JSON being the only
+interface. That said, the trying to unite the differences is the main
+reason behind PongoDB.
+
+So, given the desire to do everything /as JSON/, we have an SQL
+function of the same name. 
+
+It does four things that differ it from ~to_json~.
+
+ 1) Adds a "_type" field
+ 2) Adds an "_id" field
+ 3) Removes any primary keys
+ 4) Removes any NULLs 
+
+#+name: test-table
+#+HEADER: :engine postgresql :cmdline "--html --host localhost --user pongo pongo"
+#+HEADER: :results value html
+#+BEGIN_SRC sql 
+  DROP TABLE test;
+  CREATE TABLE test (
+    test TEXT PRIMARY KEY, 
+    number NUMERIC, 
+    date DATE,
+    time TIMESTAMP
+   );
+#+END_SRC
+
+#+HEADER: :engine postgresql :cmdline "--html --host localhost --user pongo pongo"
+#+HEADER: :results value html
+#+BEGIN_SRC sql 
+  INSERT INTO test VALUES ('This becomes the "_id" field', 42, now(), NULL);
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_HTML
+<p>INSERT 0 1</p>
+#+END_HTML
+
+In other words, here is the normal ~to_json~ :
+
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo" :results value code
+#+BEGIN_SRC sql 
+  SELECT to_json(test.*) FROM test;
+#+END_SRC
+
+=>
+#+BEGIN_SRC json
+  {
+      "test": "This becomes the \"_id\" field",
+      "number": 42,
+      "date": "2015-08-18",
+      "time": null
+  }
+#+END_SRC
+
+
+... and here is the new ~as_json~ :
+
+
+#+HEADER: :engine postgresql :cmdline " --host localhost --user pongo pongo" :results value code
+#+BEGIN_SRC sql
+  SELECT as_json(test.*) FROM test;
+#+END_SRC
+=>
+
+#+BEGIN_SRC json
+  {
+      "_type": "test",
+      "_id": "This becomes the \"_id\" field",
+      "number": 42,
+      "date": "2015-08-18"
+  }
+#+END_SRC
+
+** The ~_type~ and ~_id~ fields
+
+Basically, when turning ~anyelement~ into JSON, a ~{"_type" : <name>}~
+pair can be there. If it has any primary keys, those should be
+seen as ~{"_id" : <pkey>}~
+
+This unifies things a makes the entire ORM thing a wee bit simpler on
+the client side.
+
+
+** Projection
+   
+A projection is the JSON equivalent to ~SELECT <projection> FROM ...~
+in SQL. 
+
+Imagine that we only want certain fields to appear. For example, just the ~date~. 
+
+#+HEADER: :engine postgresql :cmdline "--html --host localhost --user pongo pongo"
+#+BEGIN_SRC sql 
+  TRUNCATE TABLE test;
+  INSERT INTO test(test, number,date) 
+   VALUES  ('projection 1', 1, '1901-01-01'), 
+           ('projection 2', 2,  '2222-02-02');
+#+END_SRC
+
+We can start with simple SQL. It of course works, but does not quite
+keep JSON happy.
+
+#+HEADER: :engine postgresql :cmdline " --html --host localhost --user pongo pongo" :results value html
+#+BEGIN_SRC sql
+  SELECT as_json(test.*)->'date' AS date FROM test;
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_HTML
+<table border="1">
+  <tr>
+    <th align="center">date</th>
+  </tr>
+  <tr valign="top">
+    <td align="left">&quot;1901-01-01&quot;</td>
+  </tr>
+  <tr valign="top">
+    <td align="left">&quot;2222-02-02&quot;</td>
+  </tr>
+</table>
+
+#+END_HTML
+
+There are ways to keep JSON involved just using SQL, and they can be quite useful at times.
+
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo" :results value code
+#+BEGIN_SRC sql
+  SELECT json_build_object('date', as_json(test.*)->'date') AS date FROM test LIMIT 1
+#+END_SRC
+ 
+=>
+
+#+BEGIN_SRC json
+  {
+      "date": "1901-01-01"
+  }
+#+END_SRC
+
+
+*** The ~view~ from here.
+
+But in reality, there are simpler ways, and if you recall we would
+like the ~_id~ and ~_type~ fields to appear all the time because it
+makes ORM a wee bit simpler.
+
+It is really the [[file:projection.org][~view~]] function that takes care of things, but
+~as_json~ calls it with an argument passed.
+
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo" :results value code
+#+BEGIN_SRC sql
+  SELECT as_json(test.*, '{"date" : true}'::json) FROM test LIMIT 1;
+#+END_SRC
+=>
+#+BEGIN_SRC json
+  {
+      "_id": "projection 1",
+      "_type": "test",
+      "date": "1901-01-01"
+  }
+#+END_SRC
+
+The second argument to ~as_json~ is the desired "projection", which is
+passed to [[file:projection.org][~view~]]. That ~{"date" : true}~ makes it an inclusive
+projection, meaning it says what to include, as opposed to an
+exclusive projection, like ~{"date" : false}~.
+
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo" :results value code
+#+BEGIN_SRC sql
+  SELECT as_json(test.*, '{"date" : false}'::json) FROM test LIMIT 1;
+#+END_SRC
+=>
+#+BEGIN_SRC json
+  {
+      "_type": "test",
+      "_id": "projection 1",
+      "number": 1
+  }
+#+END_SRC
+
+An important thing to note is that the ~_type~ and ~_id~ fields appear
+in both the inclusive and exclusive projections. While this is
+primarily a good thing, sometimes we do not want them.
+
+*IMPORTANT* Except for excluding the ~_id~ and ~_type~ field in
+inclusive projections, you cannot mix exclusive and inclusive
+projections.
+
+In other words, given the ~{"date" : true}~ inclusive projection, if
+we want to exclude the ~_id~ field, we can.
+
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo" :results value code
+#+BEGIN_SRC sql
+  SELECT as_json(test.*, '{"date" : true, "_id" : false}'::json) FROM test LIMIT 1;
+#+END_SRC
+=>
+#+BEGIN_SRC json
+{ "_type" : "test", "date" : "1901-01-01" }
+#+END_SRC
+
+
+** Default Options 
+
+With a projection we can DTRT with regards to the ~_id~ and ~_type~
+fields, sort of. There are a few issues. Looking that the the default
+options, it is easy to see what is available.
+
+Also, strangley enough, it is the four things we do 'differently' that
+can be configured to be the same as ~to_json~.
+
+#+HEADER: :engine postgresql :cmdline " --host localhost --user pongo pongo" :results value code
+#+BEGIN_SRC sql
+  SELECT default_as_json_options(null::record);
+#+END_SRC
+=>
+#+BEGIN_SRC json
+  {
+      "_type": true,
+      "_id": true,
+      "remove_null": true,
+      "remove_primary_key": true
+  }
+#+END_SRC
+
+
+
+
+#+HEADER: :engine postgresql :cmdline "--html --host localhost --user pongo pongo"
+#+HEADER: :results value code
+#+BEGIN_SRC sql 
+  TRUNCATE TABLE test;
+  INSERT INTO test VALUES ('test-pkey', 42.24, now(), NULL);
+#+END_SRC
+
+
+So, we know that ~to_json~ is just that.
+
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo"
+#+HEADER: :results value code
+#+BEGIN_SRC sql 
+  SELECT to_json(test.*) FROM test;
+#+END_SRC
+
+=>
+#+BEGIN_SRC json
+  {
+      "test": "test-pkey",
+      "number": 42.24,
+      "date": "2015-08-18",
+      "time": null
+  }
+#+END_SRC
+
+
+And we can optionally make ~as_json~ do the same.
+
+
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo"
+#+HEADER: :results value code
+#+BEGIN_SRC sql 
+  SELECT as_json(test.*, NULL, 
+      '{ 
+         "_type" : false, 
+         "_id"  : false, 
+         "remove_null" : false, 
+         "remove_primary_key" : false
+       }'::json) FROM test;
+#+END_SRC
+=>
+#+BEGIN_SRC json
+  {
+      "test": "test-pkey",
+      "number": 42.24,
+      "date": "2015-08-18",
+      "time": null
+  }
+#+END_SRC
+
+
+
+
+
+
+* ~as_json~ Dictionary
+  
+  
+** /Function/ ~as_json(anyelement, "view", "options")~
+
+
+#+BEGIN_SRC sql :engine postgresql :cmdline "--host localhost --user pongo pongo"
+  CREATE OR REPLACE FUNCTION as_json(anyelement, 
+                                     "view" json DEFAULT NULL, 
+                                     "options" json DEFAULT NULL)
+  RETURNS json AS $$
+
+    WITH to_json AS (
+      SELECT to_json($1)
+    ), "options" AS (
+      SELECT COALESCE($3, default_as_json_options($1)) AS options
+    ), "id" AS (
+     SELECT CASE WHEN (("id") IS NOT NULL) THEN 
+            json_build_object('_id', CASE WHEN ((id->>1) IS NOT NULL) THEN "id" ELSE id->0 END)
+            END
+      FROM
+      (SELECT json_agg(value) AS id 
+      FROM json_each((SELECT * FROM to_json))
+      WHERE key IN (SELECT "ids"($1))) AS t
+    )
+   
+   --  SELECT json_build_object('asd', (SELECT options->'_id' FROM "options"));
+    SELECT "view"(json_object_agg((j).key, (j).value), $2)
+
+    FROM (SELECT json_each(t) AS j
+          FROM UNNEST(ARRAY[(SELECT "_type"($1)), 
+                             (SELECT * from "id"), 
+                             (SELECT * FROM to_json)
+                       ]) AS t
+          
+         ) AS e
+   WHERE (CASE (j).key 
+         WHEN '_id' 
+          THEN (SELECT options->>'_id' FROM "options") = 'true'
+          WHEN '_type' 
+          THEN (SELECT options->>'_type' FROM "options") = 'true'
+         ELSE true
+         END) 
+   AND ((((SELECT options->>'remove_null' FROM "options") = 'true')
+          AND CASE WHEN 'null' != json_typeof(((j).value)) THEN true ELSE false END)
+        OR (SELECT options->>'remove_null' FROM "options") = 'false')
+   AND ((((SELECT options->>'remove_primary_key' FROM "options") = 'true')
+          AND (j).key NOT IN (SELECT "ids"($1)))
+        OR (SELECT options->>'remove_null' FROM "options") = 'false')
+                                                                                               
+  $$ LANGUAGE SQL;
+#+END_SRC
+
+#+RESULTS:
+| CREATE FUNCTION |
+|-----------------|
+
+** /Function/ ~_type~
+
+
+#+BEGIN_SRC sql :engine postgresql :cmdline "--host localhost --user pongo pongo"
+  CREATE OR REPLACE FUNCTION "_type"(anyelement) RETURNS json AS $$
+    SELECT json_build_object('_type', pg_typeof($1)) AS "type"
+  $$ LANGUAGE SQL;
+#+END_SRC
+
+*** Example
+
+#+HEADER: :results output code
+#+BEGIN_SRC sql  :engine postgresql :cmdline "--host localhost --user pongo pongo"
+  BEGIN;
+
+  CREATE TABLE x ( x TEXT );
+  INSERT INTO x VALUES ('yay!');
+
+  SELECT "_type"(t) FROM x AS t;
+
+  ROLLBACK;
+
+#+END_SRC
+=>
+#+BEGIN_SRC json
+{"_type" : "x"}
+#+END_SRC
+
+** /Function/ ~_ids~, ~_id~
+
+#+BEGIN_SRC sql :engine postgresql :cmdline "--host localhost --user pongo pongo"
+  CREATE OR REPLACE FUNCTION "_ids" (anyelement) 
+  RETURNS SETOF text AS $$
+    SELECT pkey.attname::text AS "pkeys"
+     FROM (SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS data_type
+           FROM   pg_index i
+           JOIN   pg_attribute a ON a.attrelid = i.indrelid
+                              AND a.attnum = ANY(i.indkey)
+           WHERE  i.indrelid = pg_typeof($1)::text::regclass -- ::regclass
+           AND    i.indisprimary) 
+       AS pkey
+
+  $$ LANGUAGE SQL;
+#+END_SRC
+
+#+RESULTS:
+| CREATE FUNCTION |
+|-----------------|
+
+#+BEGIN_SRC sql :engine postgresql :cmdline "--host localhost --user pongo pongo"
+  CREATE OR REPLACE FUNCTION "_id" (anyelement) 
+  RETURNS JSON AS $$
+    SELECT CASE WHEN (("id") IS NOT NULL) THEN 
+            json_build_object('_id', CASE WHEN ((id->>1) IS NOT NULL) THEN "id" ELSE id->0 END)
+            END
+      FROM
+      (SELECT "_ids"($1) AS id) AS t
+
+  $$ LANGUAGE SQL;
+#+END_SRC
+
+*** Example
+
+#+HEADER: :results output html
+#+BEGIN_SRC sql :engine postgresql :cmdline " --html --host localhost --user pongo pongo"
+  BEGIN;
+
+  CREATE TABLE x ( x TEXT PRIMARY KEY);
+  INSERT INTO x VALUES ('yay!');
+
+
+  CREATE TABLE y ( x TEXT, y TEXT,  PRIMARY KEY (x,y));
+  INSERT INTO y VALUES ('yay!', 'yay!');
+  INSERT INTO y VALUES ('zay!', 'yaz!');
+
+  CREATE TABLE z ( x TEXT);
+  INSERT INTO z VALUES ('yay!');
+
+  SELECT "ids"(t) AS x FROM x AS t;
+  SELECT "id"(t) AS x FROM x AS t;
+  SELECT "id"(t) AS y FROM y AS t;
+  SELECT "id"(t) AS z FROM z AS t;
+
+  ROLLBACK;
+
+#+END_SRC
+=>
+#+BEGIN_HTML
+<p>BEGIN</p>
+<p>CREATE TABLE</p>
+<p>INSERT 0 1</p>
+<p>CREATE TABLE</p>
+<p>INSERT 0 1</p>
+<p>INSERT 0 1</p>
+<p>CREATE TABLE</p>
+<p>INSERT 0 1</p>
+<table border="1">
+  <tr>
+    <th align="center">x</th>
+  </tr>
+  <tr valign="top">
+    <td align="left">x</td>
+  </tr>
+</table>
+
+<table border="1">
+  <tr>
+    <th align="center">x</th>
+  </tr>
+  <tr valign="top">
+    <td align="left">{&quot;id&quot; : &quot;x&quot;}</td>
+  </tr>
+</table>
+
+<table border="1">
+  <tr>
+    <th align="center">y</th>
+  </tr>
+  <tr valign="top">
+    <td align="left">{&quot;id&quot; : [&quot;x&quot;, &quot;y&quot;]}</td>
+  </tr>
+  <tr valign="top">
+    <td align="left">{&quot;id&quot; : [&quot;x&quot;, &quot;y&quot;]}</td>
+  </tr>
+</table>
+
+<table border="1">
+  <tr>
+    <th align="center">z</th>
+  </tr>
+  <tr valign="top">
+    <td align="left">{&quot;id&quot; : null}</td>
+  </tr>
+</table>
+
+<p>ROLLBACK</p>
+#+END_HTML
+
+** /Function/ ~default_as_json_options(anyelement)~
+
+#+BEGIN_SRC sql :engine postgresql :cmdline "--host localhost --user pongo pongo"
+  CREATE OR REPLACE FUNCTION default_as_json_options(anyelement)
+  RETURNS json AS $$
+   SELECT '{ 
+             "_type" : true, 
+             "_id"  : true, 
+             "remove_null" : true, 
+             "remove_primary_key" : true
+           }'::json
+  $$ LANGUAGE SQL;
+#+END_SRC
+
