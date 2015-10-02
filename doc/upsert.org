@@ -1,0 +1,511 @@
+#+TITLE: UPSERT : insert or update
+#+SETUPFILE: publish-html.org
+#+INCLUDE: html-navbar.org
+
+** /Function/ ~upsert_key(anyelement)~
+
+#+name: function_upsert
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"   
+#+BEGIN_SRC sql :results output
+  CREATE OR REPLACE FUNCTION upsert_key (anyelement)
+  RETURNS json AS $$ 
+   
+    SELECT json_object_agg(pkey.name, pkey.type) FROM 
+    (SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type
+     FROM   pg_index i
+     JOIN   pg_attribute a ON a.attrelid = i.indrelid
+     AND a.attnum = ANY(i.indkey)
+     WHERE  i.indrelid = pg_typeof($1)::text::regclass -- ::regclass
+     AND    i.indisprimary) AS pkey
+  $$ LANGUAGE SQL;
+#+END_SRC
+
+#+RESULTS: function_upsert
+: CREATE FUNCTION
+
+*** Example
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"   
+#+BEGIN_SRC sql :results output table
+  SELECT "upsert_key"(null::test) 
+#+END_SRC
+
+| upsert_key          |
+|---------------------|
+| { "test" : "text" } |
+
+
+** /Function/ ~update_set(complex_query json, [...])~
+# <<function where>>
+
+#+name: function_where
+#+HEADER: :engine postgresql :cmdline "--html --host localhost --user pongo pongo"
+#+HEADER: :results value html
+#+BEGIN_SRC sql 
+
+  CREATE OR REPLACE FUNCTION "update_set"
+      (set_query json,
+       "element_name" text DEFAULT NULL)
+  RETURNS text AS $$
+  DECLARE 
+    "set" text := '';
+   -- * These are for the LOOP 
+   "pair" RECORD; 
+   
+  BEGIN
+    IF ("element_name" IS NOT NULL) THEN
+     "element_name" := format('%I', "element_name");
+    END IF;
+
+    FOR "pair" IN (SELECT (json).key AS key, (json).value AS value 
+                  FROM (SELECT json_each($1) AS json) AS json)
+    LOOP 
+     -- Now we can set the SET using "sql_value"
+      "set" := concat("set", 
+       ', '
+       -- If there is a name, add it and a dot
+       ||  concat(("element_name"||'.'), format('%I', "pair".key))
+     
+       -- and finally the value
+       ||' = ' || "sql"("pair".value)
+                     );
+
+    END LOOP;
+      RETURN regexp_replace("set",'^, ', '');
+  END;
+  $$ LANGUAGE PLPGSQL;
+
+
+  CREATE OR REPLACE FUNCTION "update_set"
+      (anyelement, 
+       complex_query json,
+       "element_name" text DEFAULT NULL)
+  RETURNS text AS $$
+   SELECT "update_set"($2, $3);
+  $$ LANGUAGE SQL;
+
+#+END_SRC
+
+*** Example
+
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"   
+#+BEGIN_SRC sql :results output table
+  SELECT "update_set"(json('{"test":"2","number":122,"date":"2002-02-02","time":"2002-02-02T02:22:00","bool":false}'));
+#+END_SRC
+
+#+RESULTS:
+| update_set                                                                                  |
+|---------------------------------------------------------------------------------------------|
+| test = '2', number = 122, date = '2002-02-02', "time" = '2002-02-02T02:22:00', bool = false |
+
+
+** /Function/ ~update_where(anyelement, json)~
+
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"   
+#+BEGIN_SRC sql :results output
+  CREATE OR REPLACE FUNCTION "update_where"(anyelement, json)
+  RETURNS text AS $$ 
+  SELECT "where"((SELECT (SELECT json_object_agg(key, (json)->>(key)) FROM json_each(keys))
+                           FROM (SELECT $2 AS json, (SELECT upsert_key($1) AS keys)) AS base));
+  $$ LANGUAGE SQL;
+#+END_SRC
+
+#+RESULTS:
+: CREATE FUNCTION
+
+*** Example
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"   
+#+BEGIN_SRC sql :results output table
+  SELECT "update_where"(null::test, json('{"test":"2","number":122,"date":"2002-02-02","time":"2002-02-02T02:22:00","bool":false}'));
+#+END_SRC
+
+
+| update_where   |
+|----------------|
+| ((test = '2')) |
+
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"   
+#+BEGIN_SRC sql :results output table
+    BEGIN; 
+    CREATE FUNCTION upsert_key(test) RETURNS json AS $$ 
+     SELECT json('{"number" : "number", "date" : "date"}');
+    $$ LANGUAGE SQL ;
+
+   SELECT "update_where"(null::test, json('{"test":"2","number":122,"date":"2002-02-02","time":"2002-02-02T02:22:00","bool":false}'));
+   
+   DROP FUNCTION upsert_key(test);
+   END;
+#+END_SRC
+
+#+RESULTS:
+| BEGIN                                        |
+|----------------------------------------------|
+| CREATE FUNCTION                              |
+| update_where                                 |
+| ((number = '122') AND (date = '2002-02-02')) |
+| DROP FUNCTION                                |
+| COMMIT                                       |
+
+** /Function/ ~update_query (anyelement, json)~
+
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"   
+#+BEGIN_SRC sql :results output table
+  CREATE OR REPLACE FUNCTION "update_query" (anyelement, json)
+  RETURNS text AS $$ 
+  SELECT 'UPDATE '||pg_typeof($1) ||
+         ' SET ' ||"update_set"($2) || 
+         ' WHERE ' || "update_where"($1, $2) ||
+         ' RETURNING to_json('||pg_typeof($1)||'.*)';
+  $$ LANGUAGE SQL;
+
+  SELECT "update_query"(null::test, json('{"test":"2","number":12,"date":"2002-02-02","time":"2002-02-02T02:22:00","bool":false}'));
+#+END_SRC
+
+*** Example
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"   
+#+BEGIN_SRC sql :results output table
+  SELECT "update_query"(null::test, json('{"test":"2","number":12,"date":"2002-02-02","time":"2002-02-02T02:22:00","bool":false}'));
+#+END_SRC
+
+#+RESULTS:
+| CREATE FUNCTION                                                                                                                                           |
+|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| update_query                                                                                                                                              |
+| UPDATE test SET test = '2', number = 12, date = '2002-02-02', "time" = '2002-02-02T02:22:00', bool = false WHERE ((test = '2')) RETURNING to_json(test.*) |
+
+** /Function/ ~update~
+
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"   
+#+BEGIN_SRC sql :results output table
+  CREATE OR REPLACE FUNCTION "update" (anyelement, json)
+  RETURNS json AS $$ 
+  DECLARE 
+  "return" json;
+  BEGIN
+   EXECUTE "update_query"($1, $2) INTO "return";
+  RETURN "return";
+  END;
+  $$ LANGUAGE plpgsql ;
+
+  SELECT "update"(null::test, json('{"test":"2334","number":2,"date":"1111-02-02","time":"2002-02-02T02:22:00","bool":true}'));
+#+END_SRC
+
+*** Example
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"   
+#+BEGIN_SRC sql :results output table
+  SELECT "update"(null::test, json('{"test":"2334","number":2,"date":"1111-02-02","time":"4242-02-02T02:22:00","bool":true}'));
+#+END_SRC
+
+#+RESULTS:
+| update                                                                                  |
+|-----------------------------------------------------------------------------------------|
+| {"test":"2334","number":2,"date":"1111-02-02","time":"4242-02-02T02:22:00","bool":true} |
+
+
+** /Function/ ~insert~
+
+#+name: function_insert
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"
+#+BEGIN_SRC sql :results output
+  CREATE OR REPLACE FUNCTION "insert"(anyelement, json)
+  RETURNS json AS $$ 
+  DECLARE 
+  "return" json;
+  BEGIN
+
+  EXECUTE 'INSERT INTO '||pg_typeof($1)||'
+    (SELECT * 
+     FROM json_populate_record($1,$2))
+    RETURNING to_json(test.*)' 
+  INTO "return" USING $1, $2;
+  RETURN "return";
+  END;
+  $$ LANGUAGE plpgsql;
+#+END_SRC
+
+** /Function/ ~upsert_json_array (anyelement, json)~
+
+#+BEGIN_SRC sql :results output
+  -- For recursion
+  CREATE FUNCTION "upsert" (anyelement, json)
+  RETURNS json AS $$ 
+   SELECT null::json;
+  $$ LANGUAGE sql ;
+
+  CREATE OR REPLACE FUNCTION "upsert_json_array" (anyelement, json)
+  RETURNS json AS $$ 
+   SELECT json_agg("upsert"($1, value)) FROM json_array_elements($2)
+  $$ LANGUAGE SQL;
+#+END_SRC
+
+
+** /Function/ ~upsert (anyelement, json)~
+
+#+BEGIN_SRC sql :results output
+  CREATE OR REPLACE FUNCTION "upsert" (anyelement, json)
+  RETURNS json AS $$ 
+  DECLARE
+  "return" json;
+  BEGIN
+
+  IF ('array' = json_typeof($2)) THEN 
+    SELECT "upsert_json_array"($1, $2) INTO "return";
+  ELSE
+  LOOP
+  -- first try to update
+    BEGIN
+
+    WITH "update" AS (
+     SELECT "update"($1, $2)
+    ), "upsert" AS (
+   
+     SELECT CASE WHEN ((SELECT * FROM "update")) IS NOT NULL 
+                 THEN (SELECT * FROM "update") 
+                 ELSE "insert"($1, $2) 
+            END           
+    
+    
+    ) 
+     SELECT * FROM "upsert" INTO "return";
+     RETURN "return";
+
+     EXCEPTION WHEN unique_violation THEN
+              -- Do nothing, and loop to try the UPDATE again.
+
+   END;
+   END LOOP;
+   END IF;
+   RETURN "return";
+  END;
+  $$ LANGUAGE PLPGSQL;
+
+  SELECT "upsert"(null::test, json('{"test":"1", "number":3,"date":"141-02-02","time":"2002-02-02T02:22:00","bool":true}'));
+
+
+  SELECT "upsert"(null::test, json('[{"test":"1", "number":3}, {"test":"2351gg5", "number":566}]')) AS array;
+#+END_SRC
+
+#+BEGIN_SRC sql :results output
+  CREATE OR REPLACE FUNCTION "update" (anyelement, json)
+  RETURNS json AS $$ 
+  DECLARE 
+  "return" json;
+  BEGIN
+   EXECUTE "update_query"($1, $2) INTO "return";
+  RETURN "return";
+  END;
+  $$ LANGUAGE plpgsql ;
+
+  SELECT "update"(null::test, json('{"test":"2334","number":2,"date":"1111-02-02","time":"2002-02-02T02:22:00","bool":true}'));
+
+  CREATE FUNCTION "upsert" (anyelement, json)
+  RETURNS json AS $$ 
+   SELECT null::json;
+  $$ LANGUAGE sql ;
+
+  CREATE OR REPLACE FUNCTION "upsert_json_array" (anyelement, json)
+  RETURNS json AS $$ 
+   SELECT json_agg("upsert"($1, value)) FROM json_array_elements($2)
+  $$ LANGUAGE SQL;
+
+  CREATE OR REPLACE FUNCTION "upsert" (anyelement, json)
+  RETURNS json AS $$ 
+  DECLARE
+  "return" json;
+  BEGIN
+
+  IF ('array' = json_typeof($2)) 
+  THEN SELECT "upsert_json_array"($1, $2) INTO "return";
+  ELSE
+  LOOP
+  -- first try to update
+  BEGIN
+
+  WITH "update" AS (
+   SELECT "update"($1, $2)
+  ), "upsert" AS (
+   
+   SELECT CASE WHEN ((SELECT * FROM "update")) IS NOT NULL 
+               THEN (SELECT * FROM "update") 
+               ELSE "insert"($1, $2) 
+           END           
+    
+    
+  )
+   SELECT * FROM "upsert" INTO "return";
+   RETURN "return";
+   EXCEPTION WHEN unique_violation THEN
+              -- Do nothing, and loop to try the UPDATE again.
+
+   END;
+   END LOOP;
+   END IF;
+   RETURN "return";
+  END;
+  $$ LANGUAGE PLPGSQL;
+
+  SELECT "upsert"(null::test, json('{"test":"1", "number":3,"date":"141-02-02","time":"2002-02-02T02:22:00","bool":true}'));
+
+
+  SELECT "upsert"(null::test, json('[{"test":"1", "number":3}, {"test":"2351gg5", "number":566}]')) AS array;
+#+END_SRC
+
+
+#+name: function_update
+#+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"
+#+BEGIN_SRC sql :results output
+  CREATE OR REPLACE FUNCTION "update"(anyelement, json)
+  RETURNS json AS $$ 
+  DECLARE 
+  "return" json;
+  BEGIN
+
+  EXECUTE 'UPDATE '||pg_typeof($1)||'
+    (SELECT * 
+     FROM json_populate_record($1,$2))
+    RETURNING to_json(test.*)' 
+  INTO "return" USING $1, $2;
+  RETURN "return";
+  END;
+  $$ LANGUAGE plpgsql;
+#+END_SRC
+
+
+
+#+BEGIN_SRC sql :results output
+  CREATE OR REPLACE FUNCTION upsert_key (anyelement)
+  RETURNS json AS $$ 
+   
+    SELECT json_object_agg(pkey.name, pkey.type) FROM 
+    (SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type
+     FROM   pg_index i
+     JOIN   pg_attribute a ON a.attrelid = i.indrelid
+     AND a.attnum = ANY(i.indkey)
+     WHERE  i.indrelid = pg_typeof($1)::text::regclass -- ::regclass
+     AND    i.indisprimary) AS pkey
+  $$ LANGUAGE SQL;
+
+  -- INSERT INTO test 
+  --   (SELECT * FROM json_populate_recordset(null::test, '[{"test":2442,"b":2},{"test":2677,"b":4}]'));
+
+  CREATE OR REPLACE FUNCTION "existp" (anyelement, json)
+  RETURNS boolean AS $$ 
+  DECLARE 
+    "return" boolean;
+    "query" text;
+  BEGIN
+
+   "query" := 'SELECT true FROM '||pg_typeof($1)||' WHERE ' 
+               || "where"((SELECT (SELECT json_object_agg(key, (json)->>(key)) FROM json_each(keys))
+                           FROM (SELECT $2 AS json, (SELECT upsert_key($1) AS keys)) AS base));
+
+   EXECUTE "query" INTO "return";
+
+  RETURN "return";
+  END;
+
+  $$ LANGUAGE PLPGSQL;
+
+  CREATE OR REPLACE FUNCTION upsert_key (test)
+  RETURNS json AS $$ 
+  SELECT json('{"number" : "foo", "bool" : 1}');
+  $$ LANGUAGE SQL;
+
+  DROP FUNCTION upsert_key(test);
+
+  SELECT "existp"(null::test, json('{"test":"2","number":122,"date":"2002-02-02","time":"2002-02-02T02:22:00","bool":false}'));
+
+  -- UPDATE test SET ((test = 1));
+
+  SELECT regexp_replace("where"(json('{"test":"2","number":122,"date":"2002-02-02","time":"2002-02-02T02:22:00","bool":false}')), '\(|\)| AND ' , ' ', 'g');
+
+  SELECT "update_set"(json('{"test":"2","number":122,"date":"2002-02-02","time":"2002-02-02T02:22:00","bool":false}'));
+
+  CREATE OR REPLACE FUNCTION "update_set" (json)
+  RETURNS text AS $$ 
+  SELECT regexp_replace(regexp_replace("where"($1), '\(|\)' , '', 'g'), ' AND ', ', ', 'g');
+  $$ LANGUAGE SQL;
+
+  SELECT "update_set"(json('{"test":"2","number":122,"date":"2002-02-02","time":"2002-02-02T02:22:00","bool":false}'));
+
+  CREATE OR REPLACE FUNCTION "update_where"(anyelement, json)
+  RETURNS text AS $$ 
+  SELECT "where"((SELECT (SELECT json_object_agg(key, (json)->>(key)) FROM json_each(keys))
+                           FROM (SELECT $2 AS json, (SELECT upsert_key($1) AS keys)) AS base));
+  $$ LANGUAGE SQL;
+
+  SELECT "update_where"(null::test, json('{"test":"2","number":122,"date":"2002-02-02","time":"2002-02-02T02:22:00","bool":false}'));
+
+  CREATE OR REPLACE FUNCTION "update_query" (anyelement, json)
+  RETURNS text AS $$ 
+  SELECT 'UPDATE '||pg_typeof($1) ||
+         ' SET ' ||"update_set"($2) || 
+         ' WHERE ' || "update_where"($1, $2) ||
+         ' RETURNING to_json('||pg_typeof($1)||'.*)';
+  $$ LANGUAGE SQL;
+
+  SELECT "update_query"(null::test, json('{"test":"2","number":12,"date":"2002-02-02","time":"2002-02-02T02:22:00","bool":false}'));
+
+
+  CREATE OR REPLACE FUNCTION "update" (anyelement, json)
+  RETURNS json AS $$ 
+  DECLARE 
+  "return" json;
+  BEGIN
+   EXECUTE "update_query"($1, $2) INTO "return";
+  RETURN "return";
+  END;
+  $$ LANGUAGE plpgsql ;
+
+  SELECT "update"(null::test, json('{"test":"2334","number":2,"date":"1111-02-02","time":"2002-02-02T02:22:00","bool":true}'));
+
+  CREATE FUNCTION "upsert" (anyelement, json)
+  RETURNS json AS $$ 
+   SELECT null::json;
+  $$ LANGUAGE sql ;
+
+  CREATE OR REPLACE FUNCTION "upsert_json_array" (anyelement, json)
+  RETURNS json AS $$ 
+   SELECT json_agg("upsert"($1, value)) FROM json_array_elements($2)
+  $$ LANGUAGE SQL;
+
+  CREATE OR REPLACE FUNCTION "upsert" (anyelement, json)
+  RETURNS json AS $$ 
+  DECLARE
+  "return" json;
+  BEGIN
+
+  IF ('array' = json_typeof($2)) 
+  THEN SELECT "upsert_json_array"($1, $2) INTO "return";
+  ELSE
+  LOOP
+  -- first try to update
+  BEGIN
+
+  WITH "update" AS (
+   SELECT "update"($1, $2)
+  ), "upsert" AS (
+   
+   SELECT CASE WHEN ((SELECT * FROM "update")) IS NOT NULL 
+               THEN (SELECT * FROM "update") 
+               ELSE "insert"($1, $2) 
+           END           
+    
+    
+  )
+   SELECT * FROM "upsert" INTO "return";
+   RETURN "return";
+   EXCEPTION WHEN unique_violation THEN
+              -- Do nothing, and loop to try the UPDATE again.
+
+   END;
+   END LOOP;
+   END IF;
+   RETURN "return";
+  END;
+  $$ LANGUAGE PLPGSQL;
+
+  SELECT "upsert"(null::test, json('{"test":"1", "number":3,"date":"141-02-02","time":"2002-02-02T02:22:00","bool":true}'));
+
+
+  SELECT "upsert"(null::test, json('[{"test":"1", "number":3}, {"test":"2351gg5", "number":566}]')) AS array;
+#+END_SRC
