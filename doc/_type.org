@@ -1,0 +1,76 @@
+#+TITLE: "_type"(anyelement);
+#+SETUPFILE: publish-html.org
+#+INCLUDE: html-navbar.org
+#+OPTIONS: ^:{}
+
+#+HTML: <div id="body" class="container" style=""><div class="row">
+#+HTML: <div class="col-md-9"> 
+
+#+HTML: <h1><code>"_type"(anyelement);</code></h1><p class="lead">
+
+PongoDB objects have a "_type" field via the ~pongo._type(...)~ function.
+ 
+#+HTML: </p> 
+#+HTML: </div> 
+
+#+HTML: <nav id="toc-nav" class="col-md-3 hidden-xs hidden-sm"
+#+HTML:       style="float:right">
+#+TOC: headlines 2   
+#+HTML: </nav> <div class="col-md-9">
+
+
+* ~_type~ Concepts
+  
+In PongoDB, "Objects" may have a ~_type~ field presented. 
+
+#+HEADER: :engine postgresql :cmdline "--port 5433 --host localhost --user pongo pongo"
+#+BEGIN_SRC sql
+  DROP TABLE test__type;
+
+  CREATE TABLE test__type (
+    test TEXT, 
+    number NUMERIC, 
+    PRIMARY KEY (number)
+   );
+
+  INSERT INTO test__type VALUES ('yay!', 42);
+#+END_SRC
+
+#+HTML: <div class="well well-lg">
+*pongo=#*
+#+HEADER: :engine postgresql :cmdline "--port 5433 --host localhost --user pongo pongo"
+#+BEGIN_SRC sql
+  SELECT pongo._type(test__type) AS table, 
+         pongo._type(test) AS test, 
+         pongo._type(number) AS number  
+  FROM test__type;
+#+END_SRC
+
+*=>*
+
+| table        | test   | number    |
+|--------------+--------+-----------|
+| "test__type" | "text" | "numeric" |
+
+#+HTML: </div>
+
+* ~_type~ Dictionary
+
+** /Function/ ~_type~
+
+#+name: pongo-_type
+#+BEGIN_SRC sql :engine postgresql :cmdline "--port 5433 --host localhost --user pongo pongo"
+  CREATE OR REPLACE FUNCTION "_type"(anyelement) RETURNS json AS $$
+    SELECT to_json(pg_typeof($1)) AS "type" ;
+  $$ LANGUAGE SQL;
+#+END_SRC
+
+* ~_type.sql~ Source File
+
+#+BEGIN_SRC sql :noweb yes :padline no :tangle "../_type.sql"
+<<pongo-create-and-set-schema>>
+
+<<pongo-_type>>
+#+END_SRC
+
+
