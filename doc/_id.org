@@ -1,0 +1,157 @@
+#+TITLE: "_id"(anyelement);
+#+SETUPFILE: publish-html.org
+#+INCLUDE: html-navbar.org
+#+OPTIONS: ^:{}
+
+#+HTML: <div id="body" class="container" style=""><div class="row">
+#+HTML: <div class="col-md-9"> 
+
+#+HTML: <h1><code>"_id"(anyelement);</code></h1><p class="lead">
+
+PongoDB objects have an "_id" field.
+ 
+#+HTML: </p>
+ #+HTML: </div> 
+
+#+HTML: <nav id="toc-nav" class="col-md-3 hidden-xs hidden-sm"
+#+HTML:       style="float:right">
+#+TOC: headlines 2   
+#+HTML: </nav> <div class="col-md-9">
+
+
+* ~_id~ Concepts
+  
+In PongoDB, "Objects" stored in a "collection" require a unique ~_id~
+field. Tables in the database may have ~PRIMARY KEY~'s, but they are
+probably not named "_id". Even if they are, PongoDB requires the ~_id~
+field to be either a single JSON value if there is only one key, or a
+JSON array of JSON values.
+
+First, A single column pkey.
+
+#+name: test-_id-table
+#+HEADER: :engine postgresql :cmdline "--port 5433 --host localhost --user pongo pongo"
+#+BEGIN_SRC sql
+DROP TABLE test__id1;
+CREATE TABLE test__id1 (
+  test TEXT, 
+  number NUMERIC, 
+  PRIMARY KEY (number)
+ );
+
+INSERT INTO test__id1(test, number) VALUES ('42', 42);
+#+END_SRC
+
+#+BEGIN_SRC sql
+SELECT 
+ (SELECT "describe_pkey"(null::test__id1)) 
+  AS "Pkey Description for test__id1",
+ (SELECT "json_pkey"(test__id1) 
+        FROM test__id1 LIMIT 1) AS "Pkey for test__id",
+ (SELECT pongo._id(t1)
+   FROM test__id1 AS t1 LIMIT 1) AS "_id for test__id1" ;
+
+
+#+END_SRC
+
+| Pkey Description for test__id1       | Pkey for test__id | _id for test__id1 |
+|--------------------------------------+-------------------+-------------------|
+| [{"name":"number","type":"numeric"}] | { "number" : 42 } |                42 |
+
+
+#+name: test-_id-table
+#+HEADER: :engine postgresql :cmdline "--port 5433 --host localhost --user pongo pongo"
+#+BEGIN_SRC sql
+DROP TABLE test__id;
+CREATE TABLE test__id (
+  test TEXT, 
+  number NUMERIC, 
+  PRIMARY KEY (test, number)
+ );
+
+INSERT INTO test__id(test, number) VALUES ('42', 42);
+#+END_SRC
+
+
+#+HEADER: :engine postgresql :cmdline "--port 5433 --host localhost --user pongo pongo &2>1"
+#+BEGIN_SRC sql
+SELECT (SELECT "describe_pkey"(null::test__id)) 
+         AS "Pkey Description for test__id",
+       (SELECT "json_pkey"(test__id) 
+        FROM test__id LIMIT 1) 
+         AS "Pkey for test__id",
+       (SELECT pongo._id(t)
+        FROM test__id AS t LIMIT 1) AS "_id for test__id";
+
+#+END_SRC
+
+#+RESULTS:
+| Pkey Description for test__id       | Pkey for test__id                | _id for test__id |
+|-------------------------------------+----------------------------------+------------------|
+| [{"name":"test","type":"text"},     |                                  |                  |
+| {"name":"number","type":"numeric"}] | { "test" : "42", "number" : 42 } | ["42", 42]       |
+
+
+* ~_id~ Dictionary
+
+** /Function/ "describe_pkeys"
+
+#+name: pongo-describe_pkey
+#+BEGIN_SRC sql
+CREATE OR REPLACE FUNCTION "describe_pkey" (anyelement) 
+RETURNS json AS $$
+-- => json array of {"name":"","type":""} objects
+-- Tell us what the pkeys columns are, and their types.
+SELECT json_agg(pkeys)
+ FROM (SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type
+         FROM   pg_index i
+         JOIN   pg_attribute a ON a.attrelid = i.indrelid
+                            AND a.attnum = ANY(i.indkey)
+         WHERE  i.indrelid = pg_typeof($1)::text::regclass -- ::regclass
+         AND    i.indisprimary) AS pkeys;
+
+$$ LANGUAGE SQL;
+#+END_SRC
+
+** /Function/ "json_pkey"
+
+#+name: pongo-json_pkey
+#+BEGIN_SRC sql
+CREATE OR REPLACE FUNCTION "json_pkey" (anyelement) 
+RETURNS json AS $$
+WITH json AS (
+ SELECT to_json($1)
+)
+  SELECT json_object_agg((foo.value)->>'name', 
+                         (SELECT json.to_json-> ((foo.value)->>'name') FROM json))
+  FROM json_array_elements("describe_pkey"($1)) AS foo
+$$ LANGUAGE SQL;
+#+END_SRC
+
+** /Function/ ~_id~
+
+#+name: pongo-_id
+#+BEGIN_SRC sql
+CREATE OR REPLACE FUNCTION _id (anyelement) 
+RETURNS json AS $$
+WITH _id AS (
+ SELECT json_agg(json_each.value) AS _id FROM json_each("json_pkeys"($1))
+)
+ SELECT CASE WHEN (json_array_length(_id) > 1)
+          THEN _id ELSE _id->0 END from _id;
+$$ LANGUAGE SQL;
+#+END_SRC
+
+* ~_id.sql~ Source File
+
+#+BEGIN_SRC sql :noweb yes :padline no :tangle "../_id.sql"
+<<pongo-create-and-set-schema>>
+
+<<pongo-describe_pkey>>
+
+<<pongo-json_pkey>>
+
+<<pongo-_id>>
+#+END_SRC
+
+
