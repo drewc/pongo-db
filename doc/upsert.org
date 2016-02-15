@@ -4,7 +4,7 @@
 
 ** /Function/ ~upsert_key(anyelement)~
 
-#+name: function_upsert
+#+name: function_upsert_key
 #+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"   
 #+BEGIN_SRC sql :results output
   CREATE OR REPLACE FUNCTION upsert_key (anyelement)
@@ -35,13 +35,12 @@
 
 
 ** /Function/ ~update_set(complex_query json, [...])~
-# <<function where>>
+# <<function update_set>>
 
-#+name: function_where
+#+name: function_update_set
 #+HEADER: :engine postgresql :cmdline "--html --host localhost --user pongo pongo"
 #+HEADER: :results value html
 #+BEGIN_SRC sql 
-
   CREATE OR REPLACE FUNCTION "update_set"
       (set_query json,
        "element_name" text DEFAULT NULL)
@@ -100,6 +99,7 @@
 
 ** /Function/ ~update_where(anyelement, json)~
 
+#+name: function_update_where
 #+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"   
 #+BEGIN_SRC sql :results output
   CREATE OR REPLACE FUNCTION "update_where"(anyelement, json)
@@ -147,6 +147,7 @@
 
 ** /Function/ ~update_query (anyelement, json)~
 
+#+name: function_update_query
 #+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"   
 #+BEGIN_SRC sql :results output table
   CREATE OR REPLACE FUNCTION "update_query" (anyelement, json)
@@ -174,6 +175,7 @@
 
 ** /Function/ ~update~
 
+#+name: function_update
 #+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"   
 #+BEGIN_SRC sql :results output table
   CREATE OR REPLACE FUNCTION "update" (anyelement, json)
@@ -210,13 +212,18 @@
   RETURNS json AS $$ 
   DECLARE 
   "return" json;
+  "query" text := '';
   BEGIN
 
-  EXECUTE 'INSERT INTO '||pg_typeof($1)||'
-    (SELECT * 
-     FROM json_populate_record($1,$2))
-    RETURNING to_json(test.*)' 
-  INTO "return" USING $1, $2;
+   SELECT 'INSERT INTO '||pg_typeof($1)||' '||columns||
+          ' VALUES '||values||             
+          ' RETURNING to_json('||pg_typeof($1)||'.*)'
+    FROM (SELECT '(' || string_agg(key, ',') || ')' AS columns, 
+           '(' || string_agg("sql"(value), ',') || ')' AS values
+           FROM json_each($2)) AS foo
+   INTO "query";
+   
+  EXECUTE "query" INTO "return";
   RETURN "return";
   END;
   $$ LANGUAGE plpgsql;
@@ -224,6 +231,7 @@
 
 ** /Function/ ~upsert_json_array (anyelement, json)~
 
+#+name: function_upsert_json_array
 #+BEGIN_SRC sql :results output
   -- For recursion
   CREATE FUNCTION "upsert" (anyelement, json)
@@ -240,11 +248,13 @@
 
 ** /Function/ ~upsert (anyelement, json)~
 
+#+name: function_upsert
 #+BEGIN_SRC sql :results output
-  CREATE OR REPLACE FUNCTION "upsert" (anyelement, json)
+r  CREATE OR REPLACE FUNCTION "upsert" (anyelement, json)
   RETURNS json AS $$ 
   DECLARE
   "return" json;
+  "violation" boolean := false;
   BEGIN
 
   IF ('array' = json_typeof($2)) THEN 
@@ -268,21 +278,48 @@
      SELECT * FROM "upsert" INTO "return";
      RETURN "return";
 
-     EXCEPTION WHEN unique_violation THEN
-              -- Do nothing, and loop to try the UPDATE again.
+     EXCEPTION WHEN unique_violation THEN 
+      IF "violation" THEN RAISE; ELSE "violation" := true; END IF;
+              
 
    END;
    END LOOP;
    END IF;
    RETURN "return";
   END;
-  $$ LANGUAGE PLPGSQL;
+  $$ LANGUAGE PLPGSQL; 
+#+END_SRC
 
-  SELECT "upsert"(null::test, json('{"test":"1", "number":3,"date":"141-02-02","time":"2002-02-02T02:22:00","bool":true}'));
+#+BEGIN_SRC sql
+ SELECT "upsert"(null::test, json('{"test":"1", "number":3,"date":"141-02-02","time":"2002-02-02T02:22:00","bool":true}'));
 
 
   SELECT "upsert"(null::test, json('[{"test":"1", "number":3}, {"test":"2351gg5", "number":566}]')) AS array;
+
 #+END_SRC
+
+* ~upsert~ Source File
+
+#+BEGIN_SRC sql :noweb yes :padline no :tangle "../upsert.sql"
+<<function_upsert_key>>
+
+<<function_update_set>>
+
+<<function_update_where>>
+
+<<function_update_query>>
+
+<<function_update>>
+
+<<function_insert>>
+
+<<function_upsert_json_array>>
+
+<<function_upsert>>
+#+END_SRC
+
+
+* Appendix / Appendixitus
 
 #+BEGIN_SRC sql :results output
   CREATE OR REPLACE FUNCTION "update" (anyelement, json)
@@ -350,7 +387,7 @@
 #+END_SRC
 
 
-#+name: function_update
+# name: function_update
 #+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo_test"
 #+BEGIN_SRC sql :results output
   CREATE OR REPLACE FUNCTION "update"(anyelement, json)
@@ -362,7 +399,7 @@
   EXECUTE 'UPDATE '||pg_typeof($1)||'
     (SELECT * 
      FROM json_populate_record($1,$2))
-    RETURNING to_json(test.*)' 
+    RETURNING to_json('||pg_typeof($1)||'.*)' 
   INTO "return" USING $1, $2;
   RETURN "return";
   END;
@@ -429,7 +466,7 @@
 
   CREATE OR REPLACE FUNCTION "update_where"(anyelement, json)
   RETURNS text AS $$ 
-  SELECT "where"((SELECT (SELECT json_object_agg(key, (json)->>(key)) FROM json_each(keys))
+  SELECT "where"((SELECT (SELECT json_object_agg(key, (json)->(key)) FROM json_each(keys))
                            FROM (SELECT $2 AS json, (SELECT upsert_key($1) AS keys)) AS base));
   $$ LANGUAGE SQL;
 

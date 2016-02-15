@@ -20,6 +20,9 @@ PongoDB objects have a "_type" field via the ~pongo._type(...)~ function.
 
 
 * ~_type~ Concepts
+  :PROPERTIES:
+  :CUSTOM_ID: _type_concepts
+  :END:
   
 In PongoDB, "Objects" may have a ~_type~ field presented. 
 
@@ -55,8 +58,14 @@ In PongoDB, "Objects" may have a ~_type~ field presented.
 #+HTML: </div>
 
 * ~_type~ Dictionary
+  :PROPERTIES:
+  :CUSTOM_ID: _type_dictionary
+  :END:
 
 ** /Function/ ~_type~
+   :PROPERTIES:
+   :CUSTOM_ID: _function_type
+   :END:
 
 #+name: pongo-_type
 #+BEGIN_SRC sql :engine postgresql :cmdline "--port 5433 --host localhost --user pongo pongo"
@@ -66,6 +75,9 @@ In PongoDB, "Objects" may have a ~_type~ field presented.
 #+END_SRC
 
 * ~_type.sql~ Source File
+  :PROPERTIES:
+  :CUSTOM_ID: _type_source_file
+  :END:
 
 #+BEGIN_SRC sql :noweb yes :padline no :tangle "../_type.sql"
 <<pongo-create-and-set-schema>>

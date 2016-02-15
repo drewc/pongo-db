@@ -1,27 +1,60 @@
-#+TITLE: PongoDB : A JSON interface to PostgreSQL databases
+PongoDB : A JSON interface to PostgreSQL databases
 
-POSTGRES came before SQL, in some sense of the word. PostresSQL came
-after SQL, and improved on it while still implementing POSTGRES
-underneath. 
+POSTGRES before SQL. PostresSQL with SQL, and improved on it while
+implementing POSTGRES underneath.
 
 JSON is a very nice notation for objects. The twain shall meet, in the
 form of PongoDB.
 
-#+BEGIN_SRC sql
-CREATE DATABASE pongo;
-CREATE ROLE pongo WITH LOGIN SUPERUSER;
+~>= Postgresql 9.4~ is required, though it has been run on 9.3 with some
+modifications.
+
+* Installation
+
+ PongoDB is all contained in one .sql file within one schema,
+ ~pongo~. Thus loading this file is all that is needed.
+
+#+BEGIN_SRC sh :results verbatim
+SQL_FILE='pongo-db.sql'
+DB_NAME=pongo
+DB_USER=pongo
+PSQL_ARGS="--host=localhost --port=5433 --user=$DB_USER"
+
+psql --file=$SQL_FILE $PSQL_ARGS $DB_NAME 2>&1
+
 #+END_SRC
 
-#+BEGIN_SRC sql :engine postgresql :cmdline "--host localhost --user pongo pongo"
-CREATE SCHEMA pongo;
+
+[[info:org#Specific%20header%20arguments][info:org#Specific header arguments]]
+
+
+
+
+* HACKING
+#+HEADER: :engine postgresql :cmdline "--port 5433 --host localhost --user postgres postgres" 
+#+BEGIN_SRC sql
+-- CREATE ROLE pongo WITH LOGIN SUPERUSER;
+DROP DATABASE pongo;
+CREATE DATABASE pongo OWNER pongo;
 #+END_SRC
+
+#+RESULTS:
+| DROP DATABASE   |
+|-----------------|
+| CREATE DATABASE |
 
 #+BEGIN_SRC emacs-lisp
   (require 'ob-sql)
+  (setq org-src-fontify-natively t)
   (add-hook 'sql-mode-hook
            (lambda ()
              (sql-highlight-postgres-keywords)))
+
+  (sql-set-product 'postgres) 
+  (setq truncate-lines t) 
+  (setq sql-postgres-login-params
+        '((user :default "pongo")
+          (database :default "pongo")
+          (server :default "localhost")
+          (port :default 5433)))
 #+END_SRC
-
-
-

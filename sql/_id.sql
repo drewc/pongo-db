@@ -10,12 +10,12 @@ SELECT json_agg(pkeys)
          FROM   pg_index i
          JOIN   pg_attribute a ON a.attrelid = i.indrelid
                             AND a.attnum = ANY(i.indkey)
-         WHERE  i.indrelid = pg_typeof($1)::text::regclass -- ::regclass
+         WHERE  i.indrelid = CAST(pg_typeof($1) AS pg_catalog.text)::regclass -- ::regclass
          AND    i.indisprimary) AS pkeys;
 
 $$ LANGUAGE SQL;
 
-CREATE OR REPLACE FUNCTION "json_pkey" (anyelement) 
+CREATE OR REPLACE FUNCTION "json_pkey" (anyelement)
 RETURNS json AS $$
 WITH json AS (
  SELECT to_json($1)
@@ -25,10 +25,16 @@ WITH json AS (
   FROM json_array_elements("describe_pkey"($1)) AS foo
 $$ LANGUAGE SQL;
 
+CREATE OR REPLACE FUNCTION "json_pkey" (anyelement, json)
+RETURNS json AS $$
+  SELECT json_object_agg((foo.value)->>'name', ($2)->(foo.value)->>'name')
+  FROM json_array_elements("describe_pkey"($1)) AS foo 
+$$ LANGUAGE SQL;
+
 CREATE OR REPLACE FUNCTION _id (anyelement) 
 RETURNS json AS $$
 WITH _id AS (
- SELECT json_agg(json_each.value) AS _id FROM json_each("json_pkeys"($1))
+ SELECT json_agg(json_each.value) AS _id FROM json_each("json_pkey"($1))
 )
  SELECT CASE WHEN (json_array_length(_id) > 1)
           THEN _id ELSE _id->0 END from _id;

@@ -1,21 +1,21 @@
-#+TITLE: as_json(anyelement);
+#+TITLE: as_json(anyelement, view);
 #+SETUPFILE: publish-html.org
 #+INCLUDE: html-navbar.org
 #+OPTIONS: ^:{}
 
-#+HTML: <div id="body" class="container" style="padding-top:65px"><div class="row">
+#+HTML: <div id="body" class="container" style=""><div class="row">
 #+HTML: <div class="col-md-9"> 
 
-#+HTML: <p class="lead">
+#+HTML: <h1><code>as_json(anyelement, view);</code></h1><p class="lead">
 
 The database itself may or may not contain any JSON, yet that is what
 is desired. ~as_json~ to the rescue!
 
-PostgreSQL already offers ~to_json~, but PongoDB wants very little to
-do with SQL. 
+PostgreSQL already offers ~to_json~, but PongoDB has somethings that
+are extra.
 
 It is not NoSQL /per se/, because everything has a purpose, and a big
-reasoning behind PongoDB is to avoid SQL as much as possible.
+reasoning behind PongoDB is to avoid the SQL syntax as much as possible.
  
 #+HTML: </p> 
 #+HTML: </div> 
@@ -34,18 +34,16 @@ reason behind PongoDB.
 So, given the desire to do everything /as JSON/, we have an SQL
 function of the same name. 
 
-It does four things that differ it from ~to_json~.
+It does four things, optionally, that differ it from ~to_json~.
 
  1) Adds a "_type" field
  2) Adds an "_id" field
  3) Removes any primary keys
  4) Removes any NULLs 
 
-#+name: test-table
-#+HEADER: :engine postgresql :cmdline "--html --host localhost --user pongo pongo"
-#+HEADER: :results value html
+#+HEADER: :engine postgresql :cmdline "--port 5433 --host localhost --user pongo pongo"
 #+BEGIN_SRC sql 
-  DROP TABLE test;
+  DROP TABLE test_as_json;
   CREATE TABLE test (
     test TEXT PRIMARY KEY, 
     number NUMERIC, 
@@ -54,10 +52,10 @@ It does four things that differ it from ~to_json~.
    );
 #+END_SRC
 
-#+HEADER: :engine postgresql :cmdline "--html --host localhost --user pongo pongo"
+#+HEADER: :engine postgresql :cmdline "--port 5433 --host localhost --user pongo pongo"
 #+HEADER: :results value html
 #+BEGIN_SRC sql 
-  INSERT INTO test VALUES ('This becomes the "_id" field', 42, now(), NULL);
+  INSERT INTO test_as_json VALUES ('This becomes the "_id" field', 42, now(), NULL);
 #+END_SRC
 
 #+RESULTS:
@@ -107,7 +105,7 @@ Basically, when turning ~anyelement~ into JSON, a ~{"_type" : <name>}~
 pair can be there. If it has any primary keys, those should be
 seen as ~{"_id" : <pkey>}~
 
-This unifies things a makes the entire ORM thing a wee bit simpler on
+This unifies things and  makes the entire ORM thing a wee bit simpler on
 the client side.
 
 
@@ -167,12 +165,13 @@ There are ways to keep JSON involved just using SQL, and they can be quite usefu
 
 
 *** The ~view~ from here.
+<<The view from here>>
 
 But in reality, there are simpler ways, and if you recall we would
 like the ~_id~ and ~_type~ fields to appear all the time because it
 makes ORM a wee bit simpler.
 
-It is really the [[file:projection.org][~view~]] function that takes care of things, but
+It is really the [[file:view.org][~view~]] function that takes care of things, but
 ~as_json~ calls it with an argument passed.
 
 #+HEADER: :engine postgresql :cmdline "--host localhost --user pongo pongo" :results value code
@@ -228,6 +227,7 @@ we want to exclude the ~_id~ field, we can.
 
 
 ** Default Options 
+<<as_json default options>>
 
 With a projection we can DTRT with regards to the ~_id~ and ~_type~
 fields, sort of. There are a few issues. Looking that the the default
@@ -236,21 +236,30 @@ options, it is easy to see what is available.
 Also, strangley enough, it is the four things we do 'differently' that
 can be configured to be the same as ~to_json~.
 
-#+HEADER: :engine postgresql :cmdline " --host localhost --user pongo pongo" :results value code
+| name        | value | description                                   |
+|-------------+-------+-----------------------------------------------|
+| view        | null  | The [[file:view.org][/Projection Object/]] applied to the output |
+| _type       | true  | A boolean to provide the _type field          |
+| _id         | true  | A boolean to provide the _id field            |
+| null        | false | A boolean to provide any null valued fields   |
+| primary_key | false | A boolean to provide the primary keys         |
+
+#+HEADER: :engine postgresql :cmdline "--port 5433 --host localhost --user pongo pongo" :results value code
 #+BEGIN_SRC sql
-  SELECT default_as_json_options(null::record);
-#+END_SRC
-=>
-#+BEGIN_SRC json
-  {
-      "_type": true,
-      "_id": true,
-      "remove_null": true,
-      "remove_primary_key": true
-  }
+  SELECT default_as_json_options();
 #+END_SRC
 
-
+#+RESULTS:
+#+BEGIN_SRC sql
+default_as_json_options
+{ 
+           "view" : null,
+           "_type" : true,
+           "_id"  : true,
+           "null" : false,
+           "primary_key" : false
+         }
+#+END_SRC
 
 
 #+HEADER: :engine postgresql :cmdline "--html --host localhost --user pongo pongo"
@@ -305,19 +314,105 @@ And we can optionally make ~as_json~ do the same.
 #+END_SRC
 
 
-
-
-
-
 * ~as_json~ Dictionary
-  
-  
-** /Function/ ~as_json(anyelement, "view", "options")~
 
+** /Function/ ~default_as_json_options(...)~
+
+#+name: pongo-default_as_json_options
+#+BEGIN_SRC sql :engine postgresql :cmdline "--port 5433 --host localhost --user pongo pongo"
+  CREATE OR REPLACE FUNCTION default_as_json_options()
+  RETURNS json AS $$
+   SELECT '{ 
+             "view" : null,
+             "_type" : true,
+             "_id"  : true,
+             "null" : false,
+             "primary_key" : false
+           }'::json
+  $$ LANGUAGE SQL;
+
+  CREATE OR REPLACE FUNCTION default_as_json_options(anyelement)
+  RETURNS json AS $$
+   SELECT pongo.default_as_json_options ();
+  $$ LANGUAGE SQL;
+#+END_SRC
+
+#+RESULTS:
+| CREATE FUNCTION |
+|-----------------|
+| CREATE FUNCTION |
+
+** /Function/ ~as_json(anyelement, "options")~
+
+#+name: pongo-as-json
+#+BEGIN_SRC sql :engine postgresql :cmdline "--port 5433 --host localhost --user pongo pongo"
+  CREATE OR REPLACE FUNCTION default_as_json(anyelement,                                   
+                                                "options" json DEFAULT NULL)
+  RETURNS json AS $$
+  -- First, to_json
+    WITH to_json AS (
+      SELECT to_json($1) AS to_json
+  -- options, each either supplied or default    
+    ), "options" AS (
+      SELECT json_object_agg(key, coalesce($2->key, value)) AS "options"
+       FROM json_each(pongo.default_as_json_options($1))
+    ), "id" AS (
+      SELECT CASE WHEN (SELECT "options"->>'_id' = 'true' FROM "options") THEN
+                    pongo.json_concat(json_build_object('_id', pogngo._id($1)), to_json)
+                  ELSE to_json
+             END AS "id"
+      FROM to_json AS "id"
+    ), "type" AS (
+      SELECT CASE WHEN (SELECT "options"->>'_type' = 'true' FROM "options") THEN
+                    pongo.json_concat(json_build_object('_type', pongo._type($1)), "id")
+                  ELSE "id"
+             END AS "type"
+      FROM "id"
+    ), "pkey" AS (
+     SELECT CASE WHEN (SELECT "options"->>'primary_key' = 'false' FROM "options") THEN
+                (SELECT json_object_agg(key, value)
+                  FROM json_each((SELECT "type" FROM "type"))
+                  WHERE ((pongo.json_pkey($1)->key) IS NULL))
+              ELSE (SELECT "type" FROM "type")
+             END AS "pkey"
+
+    ), "null" AS (
+     SELECT CASE WHEN (SELECT "options"->>'null' = 'false' FROM "options") THEN
+                  pongo.json_strip_nulls("pkey")
+                 ELSE "pkey"
+                     
+             END AS "null"
+       FROM "pkey"
+    ), "this" AS (
+     SELECT "null" AS "this"  FROM "null"
+    )
+                     
+    SELECT CASE WHEN (SELECT "options"->>'view' != 'null' FROM "options") THEN
+                 pongo."view"("this", (SELECT "options"->'view'))
+                ELSE "this"
+                END
+    FROM "this"
+  $$ LANGUAGE SQL;
+
+  CREATE OR REPLACE FUNCTION as_json(anyelement, "options" json DEFAULT NULL)
+  RETURNS json AS $$
+   SELECT pongo.default_as_json($1, $2) ;
+  $$ LANGUAGE SQL;
+
+#+END_SRC
+
+#+RESULTS: pongo-as-json
+| CREATE FUNCTION |
+|-----------------|
+| CREATE FUNCTION |
+
+#+RESULTS:
+| CREATE FUNCTION |
+|-----------------|
+| CREATE FUNCTION |
 
 #+BEGIN_SRC sql :engine postgresql :cmdline "--host localhost --user pongo pongo"
-  CREATE OR REPLACE FUNCTION as_json(anyelement, 
-                                     "view" json DEFAULT NULL, 
+  CREATE OR REPLACE FUNCTION as_json(anyelement,                                   
                                      "options" json DEFAULT NULL)
   RETURNS json AS $$
 
@@ -366,155 +461,4 @@ And we can optionally make ~as_json~ do the same.
 | CREATE FUNCTION |
 |-----------------|
 
-** /Function/ ~_type~
-
-
-#+BEGIN_SRC sql :engine postgresql :cmdline "--host localhost --user pongo pongo"
-  CREATE OR REPLACE FUNCTION "_type"(anyelement) RETURNS json AS $$
-    SELECT json_build_object('_type', pg_typeof($1)) AS "type"
-  $$ LANGUAGE SQL;
-#+END_SRC
-
-*** Example
-
-#+HEADER: :results output code
-#+BEGIN_SRC sql  :engine postgresql :cmdline "--host localhost --user pongo pongo"
-  BEGIN;
-
-  CREATE TABLE x ( x TEXT );
-  INSERT INTO x VALUES ('yay!');
-
-  SELECT "_type"(t) FROM x AS t;
-
-  ROLLBACK;
-
-#+END_SRC
-=>
-#+BEGIN_SRC json
-{"_type" : "x"}
-#+END_SRC
-
-** /Function/ ~_ids~, ~_id~
-
-#+BEGIN_SRC sql :engine postgresql :cmdline "--host localhost --user pongo pongo"
-  CREATE OR REPLACE FUNCTION "_ids" (anyelement) 
-  RETURNS SETOF text AS $$
-    SELECT pkey.attname::text AS "pkeys"
-     FROM (SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS data_type
-           FROM   pg_index i
-           JOIN   pg_attribute a ON a.attrelid = i.indrelid
-                              AND a.attnum = ANY(i.indkey)
-           WHERE  i.indrelid = pg_typeof($1)::text::regclass -- ::regclass
-           AND    i.indisprimary) 
-       AS pkey
-
-  $$ LANGUAGE SQL;
-#+END_SRC
-
-#+RESULTS:
-| CREATE FUNCTION |
-|-----------------|
-
-#+BEGIN_SRC sql :engine postgresql :cmdline "--host localhost --user pongo pongo"
-  CREATE OR REPLACE FUNCTION "_id" (anyelement) 
-  RETURNS JSON AS $$
-    SELECT CASE WHEN (("id") IS NOT NULL) THEN 
-            json_build_object('_id', CASE WHEN ((id->>1) IS NOT NULL) THEN "id" ELSE id->0 END)
-            END
-      FROM
-      (SELECT "_ids"($1) AS id) AS t
-
-  $$ LANGUAGE SQL;
-#+END_SRC
-
-*** Example
-
-#+HEADER: :results output html
-#+BEGIN_SRC sql :engine postgresql :cmdline " --html --host localhost --user pongo pongo"
-  BEGIN;
-
-  CREATE TABLE x ( x TEXT PRIMARY KEY);
-  INSERT INTO x VALUES ('yay!');
-
-
-  CREATE TABLE y ( x TEXT, y TEXT,  PRIMARY KEY (x,y));
-  INSERT INTO y VALUES ('yay!', 'yay!');
-  INSERT INTO y VALUES ('zay!', 'yaz!');
-
-  CREATE TABLE z ( x TEXT);
-  INSERT INTO z VALUES ('yay!');
-
-  SELECT "ids"(t) AS x FROM x AS t;
-  SELECT "id"(t) AS x FROM x AS t;
-  SELECT "id"(t) AS y FROM y AS t;
-  SELECT "id"(t) AS z FROM z AS t;
-
-  ROLLBACK;
-
-#+END_SRC
-=>
-#+BEGIN_HTML
-<p>BEGIN</p>
-<p>CREATE TABLE</p>
-<p>INSERT 0 1</p>
-<p>CREATE TABLE</p>
-<p>INSERT 0 1</p>
-<p>INSERT 0 1</p>
-<p>CREATE TABLE</p>
-<p>INSERT 0 1</p>
-<table border="1">
-  <tr>
-    <th align="center">x</th>
-  </tr>
-  <tr valign="top">
-    <td align="left">x</td>
-  </tr>
-</table>
-
-<table border="1">
-  <tr>
-    <th align="center">x</th>
-  </tr>
-  <tr valign="top">
-    <td align="left">{&quot;id&quot; : &quot;x&quot;}</td>
-  </tr>
-</table>
-
-<table border="1">
-  <tr>
-    <th align="center">y</th>
-  </tr>
-  <tr valign="top">
-    <td align="left">{&quot;id&quot; : [&quot;x&quot;, &quot;y&quot;]}</td>
-  </tr>
-  <tr valign="top">
-    <td align="left">{&quot;id&quot; : [&quot;x&quot;, &quot;y&quot;]}</td>
-  </tr>
-</table>
-
-<table border="1">
-  <tr>
-    <th align="center">z</th>
-  </tr>
-  <tr valign="top">
-    <td align="left">{&quot;id&quot; : null}</td>
-  </tr>
-</table>
-
-<p>ROLLBACK</p>
-#+END_HTML
-
-** /Function/ ~default_as_json_options(anyelement)~
-
-#+BEGIN_SRC sql :engine postgresql :cmdline "--host localhost --user pongo pongo"
-  CREATE OR REPLACE FUNCTION default_as_json_options(anyelement)
-  RETURNS json AS $$
-   SELECT '{ 
-             "_type" : true, 
-             "_id"  : true, 
-             "remove_null" : true, 
-             "remove_primary_key" : true
-           }'::json
-  $$ LANGUAGE SQL;
-#+END_SRC
-
+* ~as_json.sql~ Source Code
